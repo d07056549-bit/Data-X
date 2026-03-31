@@ -82,6 +82,26 @@ def parse_date_flexible(s: str) -> datetime | None:
 
     return None
 
+def infer_date(full_path, rel_path, stat):
+    """
+    Multi-tier date inference:
+    1. Filename
+    2. Folder path
+    3. File modified timestamp
+    """
+    # Tier 1: filename
+    date = parse_date_flexible(full_path.name)
+    if date:
+        return date
+
+    # Tier 2: folder path
+    date = parse_date_flexible(str(rel_path))
+    if date:
+        return date
+
+    # Tier 3: fallback to file modified timestamp
+    return datetime.fromtimestamp(stat.st_mtime)
+
 
 def infer_event_type(path: Path) -> str:
     """Infer event type from folder names."""
