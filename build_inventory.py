@@ -160,6 +160,40 @@ def extract_date_from_file(full_path: Path) -> datetime | None:
 
     return None
 
+# ---------------------------------------------------------
+# FILE CONTENT DATE EXTRACTION
+# ---------------------------------------------------------
+
+def extract_date_from_file(full_path: Path) -> datetime | None:
+    # ... your existing CSV/TXT/Excel/JSON logic ...
+    return None
+
+
+# ---------------------------------------------------------
+# UNSTRUCTURED DATE EXTRACTION (NEW)
+# ---------------------------------------------------------
+
+def extract_unstructured_date(full_path: Path) -> datetime | None:
+    """
+    Scan the first ~200 lines of a text-like file for any date pattern.
+    """
+    try:
+        with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+            for _ in range(200):
+                line = f.readline()
+                if not line:
+                    break
+
+                candidate = find_date_candidate(line)
+                if candidate:
+                    try:
+                        return dateparser.parse(candidate, dayfirst=True)
+                    except Exception:
+                        continue
+    except Exception:
+        pass
+
+    return None
 
 # ---------------------------------------------------------
 # MULTI-TIER DATE INFERENCE
