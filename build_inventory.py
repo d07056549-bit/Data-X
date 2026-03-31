@@ -12,7 +12,7 @@ import pandas as pd
 # CONFIG
 # -------------------------------------------------------------------
 
-PROJECT_ROOT = Path(r"C:\Users\Empok\Documents\GitHub\Data-X")
+PROJECT_ROOT = Path(r"C:\Users\Empok\Documents\GitHub\Sofie\Data\raw")
 
 RAW_ROOT = PROJECT_ROOT / "Data" / "raw"
 PARQUET_CACHE = RAW_ROOT / "_parquet_cache"
