@@ -233,6 +233,7 @@ def main():
     new_inv = pd.DataFrame(new_records)
 
     for col in ["modified_time", "created_time", "first_valid_date", "last_valid_date"]:
+    if col in new_inv.columns:
         new_inv[col] = pd.to_datetime(new_inv[col], errors="coerce")
 
     old_inv = load_existing_inventory()
