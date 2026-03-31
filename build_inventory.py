@@ -145,8 +145,10 @@ def extract_file_metadata(path: Path) -> Dict[str, Any]:
     event_type = infer_event_type(path) or "Unknown"
     source = infer_source(path) or "Unknown"
 
+    # Convert to Parquet if needed
     parquet_path = convert_to_parquet_if_needed(path, event_type, source)
 
+    # Try loading Parquet for date inference
     df = None
     if parquet_path and parquet_path.exists():
         try:
@@ -154,10 +156,13 @@ def extract_file_metadata(path: Path) -> Dict[str, Any]:
         except Exception:
             df = None
 
+    # Extract date range
     first_dt, last_dt = extract_date_range(df) if df is not None else (None, None)
 
+    # L2 logging
     print(f"[SCAN] {event_type}/{source} → {path.name} → dates: {first_dt} → {last_dt}")
 
+    # Build metadata dict (always complete)
     meta = {
         "path_full": str(path),
         "path_relative": str(path.relative_to(PROJECT_ROOT)),
@@ -177,7 +182,6 @@ def extract_file_metadata(path: Path) -> Dict[str, Any]:
     }
 
     return meta
-
 
 def scan_raw_tree() -> List[Dict[str, Any]]:
     """Recursively scan all raw files."""
