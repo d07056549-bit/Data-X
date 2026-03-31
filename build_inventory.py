@@ -166,24 +166,31 @@ def extract_date_from_file(full_path: Path) -> datetime | None:
 # ---------------------------------------------------------
 
 def infer_date(full_path: Path, rel_path: Path, stat) -> datetime:
-    # Tier 1: filename
+    # Layer 1: filename
     date = parse_date_flexible(full_path.name)
     if date:
         return date
 
-    # Tier 2: folder path
+    # Layer 2: folder path
     date = parse_date_flexible(str(rel_path))
     if date:
         return date
 
-    # Tier 3: file content
+    # Layer 3: structured content
     date = extract_date_from_file(full_path)
     if date:
         return date
 
-    # Tier 4: fallback
-    return datetime.fromtimestamp(stat.st_mtime)
+    # Layer 4: unstructured content
+    date = extract_unstructured_date(full_path)
+    if date:
+        return date
 
+    # Layer 5: domain-specific (optional, next step)
+    # e.g., ACLED, UCDP, IMF, EIA, Market
+
+    # Layer 6: fallback
+    return datetime.fromtimestamp(stat.st_mtime)
 
 # ---------------------------------------------------------
 # EVENT TYPE INFERENCE
