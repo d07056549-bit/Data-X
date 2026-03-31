@@ -9,11 +9,12 @@ import pdfplumber
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any, List
-from osgeo import gdal
+
+import h5py          # ← MUST load first
+import xarray as xr  # ← loads NetCDF/HDF5 backends
+from osgeo import gdal  # ← loads GDAL’s HDF5 last
 
 import pandas as pd
-import xarray as xr
-import h5py
 
 # ---------------------------------------------------------
 # UNIVERSAL INGESTION FRAMEWORK — ROUTING + HANDLER SKELETON
