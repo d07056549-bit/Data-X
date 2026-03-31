@@ -24,14 +24,14 @@ OUTPUT_PATH = PROCESSED_ROOT / "inventory_files.parquet"
 # ---------------------------------------------------------
 
 DATE_CANDIDATE_PATTERNS = [
-    r"\d{4}-\d{2}-\d{2}",        # 2026-03-21
-    r"\d{4}_\d{2}_\d{2}",        # 2026_03_21
-    r"\d{2}-\d{2}-\d{4}",        # 21-03-2026 or 03-21-2026
-    r"\d{2}_\d{2}_\d{4}",        # 21_03_2026 or 03_21_2026
-    r"\d{2}/\d{2}/\d{4}",        # 21/03/2026 or 03/21/2026
-    r"\d{4}-\d{2}",              # 2026-03
-    r"\d{4}",                    # 2026
-    r"\d{1,2}[A-Za-z]{3}\d{4}",  # 13Mar2026
+    r"\d{4}-\d{2}-\d{2}",
+    r"\d{4}_\d{2}_\d{2}",
+    r"\d{2}-\d{2}-\d{4}",
+    r"\d{2}_\d{2}_\d{4}",
+    r"\d{2}/\d{2}/\d{4}",
+    r"\d{4}-\d{2}",
+    r"\d{4}",
+    r"\d{1,2}[A-Za-z]{3}\d{4}",
 ]
 
 EXPLICIT_FORMATS = [
@@ -50,7 +50,7 @@ EXPLICIT_FORMATS = [
 
 
 # ---------------------------------------------------------
-# DATE EXTRACTION ENGINE
+# DATE HELPERS
 # ---------------------------------------------------------
 
 def find_date_candidate(s: str) -> str | None:
@@ -59,13 +59,6 @@ def find_date_candidate(s: str) -> str | None:
         if match:
             return match.group(0)
     return None
-    
-def looks_like_date_column(colname: str) -> bool:
-    col = colname.lower()
-    keywords = ["date", "time", "year", "period", "timestamp", "dt"]
-    return any(k in col for k in keywords)
-
-
 
 
 def parse_date_flexible(s: str) -> datetime | None:
@@ -76,14 +69,12 @@ def parse_date_flexible(s: str) -> datetime | None:
     if not candidate:
         return None
 
-    # Try explicit formats
     for fmt in EXPLICIT_FORMATS:
         try:
             return datetime.strptime(candidate, fmt)
         except ValueError:
             continue
 
-    # Try dateutil with dayfirst variations
     for dayfirst in (True, False):
         try:
             return dateparser.parse(candidate, dayfirst=dayfirst)
@@ -93,14 +84,88 @@ def parse_date_flexible(s: str) -> datetime | None:
     return None
 
 
-def infer_date(full_path, rel_path, stat):
-    """
-    Multi-tier date inference:
-    1. Filename
-    2. Folder path
-    3. File content (NEW)
-    4. File modified timestamp
-    """
+def looks_like_date_column(colname: str) -> bool:
+    col = colname.lower()
+    keywords = ["date", "time", "year", "period", "timestamp", "dt"]
+    return any(k in col for k in keywords)
+
+
+# ---------------------------------------------------------
+# FILE CONTENT DATE EXTRACTION
+# ---------------------------------------------------------
+
+def extract_date_from_file(full_path: Path) -> datetime | None:
+    suffix = full_path.suffix.lower()
+
+    # CSV / TXT
+    if suffix in [".csv", ".txt"]:
+        try:
+            df = pd.read_csv(full_path, nrows=500)
+            date_cols = [c for c in df.columns if looks_like_date_column(c)]
+
+            for col in date_cols:
+                try:
+                    dates = pd.to_datetime(df[col], errors="coerce")
+                    valid = dates.dropna()
+                    if not valid.empty:
+                        return valid.max().to_pydatetime()
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    # JSON
+    if suffix == ".json":
+        try:
+            import json
+            with open(full_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            def walk(obj):
+                if isinstance(obj, dict):
+                    for v in obj.values():
+                        yield from walk(v)
+                elif isinstance(obj, list):
+                    for v in obj:
+                        yield from walk(v)
+                else:
+                    yield obj
+
+            for value in walk(data):
+                try:
+                    dt = pd.to_datetime(value, errors="coerce")
+                    if pd.notnull(dt):
+                        return dt.to_pydatetime()
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    # Excel
+    if suffix in [".xlsx", ".xls"]:
+        try:
+            df = pd.read_excel(full_path, nrows=500)
+            date_cols = [c for c in df.columns if looks_like_date_column(c)]
+
+            for col in date_cols:
+                try:
+                    dates = pd.to_datetime(df[col], errors="coerce")
+                    valid = dates.dropna()
+                    if not valid.empty:
+                        return valid.max().to_pydatetime()
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    return None
+
+
+# ---------------------------------------------------------
+# MULTI-TIER DATE INFERENCE
+# ---------------------------------------------------------
+
+def infer_date(full_path: Path, rel_path: Path, stat) -> datetime:
     # Tier 1: filename
     date = parse_date_flexible(full_path.name)
     if date:
@@ -118,6 +183,7 @@ def infer_date(full_path, rel_path, stat):
 
     # Tier 4: fallback
     return datetime.fromtimestamp(stat.st_mtime)
+
 
 # ---------------------------------------------------------
 # EVENT TYPE INFERENCE
@@ -147,7 +213,6 @@ def build_current_scan() -> pd.DataFrame:
         for f in files:
             full_path = Path(root) / f
             rel_path = full_path.relative_to(RAW_ROOT)
-
             stat = full_path.stat()
 
             date = infer_date(full_path, rel_path, stat)
@@ -168,88 +233,6 @@ def build_current_scan() -> pd.DataFrame:
             })
 
     return pd.DataFrame(records)
-
-def extract_date_from_file(full_path: Path) -> datetime | None:
-    """
-    Try to extract a date from inside the file.
-    Supports CSV, TXT, JSON, XLSX.
-    Returns the latest date found.
-    """
-    suffix = full_path.suffix.lower()
-
-    # --------------------------
-# CSV / TXT
-# --------------------------
-if suffix in [".csv", ".txt"]:
-    try:
-        df = pd.read_csv(full_path, nrows=500)
-
-        # Only check columns that look like dates
-        date_cols = [c for c in df.columns if looks_like_date_column(c)]
-
-        for col in date_cols:
-            try:
-                dates = pd.to_datetime(df[col], errors="coerce")
-                valid = dates.dropna()
-                if not valid.empty:
-                    return valid.max().to_pydatetime()
-            except Exception:
-                continue
-    except Exception:
-        pass
-        
-     return None
-
-    # --------------------------
-    # JSON
-    # --------------------------
-    if suffix == ".json":
-        try:
-            import json
-            with open(full_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            # Flatten JSON
-            def walk(obj):
-                if isinstance(obj, dict):
-                    for v in obj.values():
-                        yield from walk(v)
-                elif isinstance(obj, list):
-                    for v in obj:
-                        yield from walk(v)
-                else:
-                    yield obj
-
-            for value in walk(data):
-                try:
-                    dt = pd.to_datetime(value, errors="coerce")
-                    if pd.notnull(dt):
-                        return dt.to_pydatetime()
-                except Exception:
-                    continue
-        except Exception:
-            pass
-
-    # --------------------------
-    # Excel
-    # --------------------------
-    if suffix in [".xlsx", ".xls"]:
-    try:
-        df = pd.read_excel(full_path, nrows=500)
-        date_cols = [c for c in df.columns if looks_like_date_column(c)]
-
-        for col in date_cols:
-            try:
-                dates = pd.to_datetime(df[col], errors="coerce")
-                valid = dates.dropna()
-                if not valid.empty:
-                    return valid.max().to_pydatetime()
-            except Exception:
-                continue
-    except Exception:
-        pass
-
-    return None
 
 
 # ---------------------------------------------------------
@@ -298,7 +281,10 @@ def main():
     merged = merge_inventories(existing, new_scan)
     print(f"Final inventory has {len(merged)} rows.")
 
-    merged = merged.sort_values(["event_type", "year", "month", "week", "relative_path"], na_position="last")
+    merged = merged.sort_values(
+        ["event_type", "year", "month", "week", "relative_path"],
+        na_position="last"
+    )
 
     merged.to_parquet(OUTPUT_PATH, index=False)
     print(f"Inventory written to: {OUTPUT_PATH}")
