@@ -193,24 +193,24 @@ def extract_file_metadata(path: Path) -> Dict[str, Any]:
     event_type = infer_event_type(path) or "Unknown"
     source = infer_source(path) or "Unknown"
 
-    # UNIVERSAL INGESTION FRAMEWORK: route file to correct handler
-df_or_meta, handler_used = dispatch_loader(path)
+    # UNIVERSAL INGESTION FRAMEWORK
+    df_or_meta, handler_used = dispatch_loader(path)
 
-# If handler returned a DataFrame → write Parquet
-if isinstance(df_or_meta, pd.DataFrame):
-    parquet_path = convert_to_parquet_if_needed(path, event_type, source, df=df_or_meta)
-    df = df_or_meta
-else:
-    parquet_path = None
-    df = None
+    # If handler returned a DataFrame → write Parquet
+    if isinstance(df_or_meta, pd.DataFrame):
+        parquet_path = convert_to_parquet_if_needed(
+            path, event_type, source, df=df_or_meta
+        )
+        df = df_or_meta
+    else:
+        parquet_path = None
+        df = None
 
     # Extract date range
     first_dt, last_dt = extract_date_range(df) if df is not None else (None, None)
 
-    # L2 logging
     print(f"[SCAN] {event_type}/{source} → {path.name} → dates: {first_dt} → {last_dt}")
 
-    # Build metadata dict (always complete)
     meta = {
         "path_full": str(path),
         "path_relative": str(path.relative_to(PROJECT_ROOT)),
@@ -229,10 +229,10 @@ else:
         "last_valid_date": last_dt,
         "convertible": isinstance(df, pd.DataFrame),
         "handler_used": handler_used,
-
     }
 
     return meta
+
 
 def scan_raw_tree() -> List[Dict[str, Any]]:
     """Recursively scan all raw files."""
