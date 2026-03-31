@@ -147,7 +147,7 @@ def extract_file_metadata(path: Path) -> Dict[str, Any]:
     df: Optional[pd.DataFrame] = None
     try:
         if meta["extension"] in [".csv"]:
-            df = pd.read_csv(path)
+            df = pd.read_csv(path, low_memory=False)
         elif meta["extension"] in [".xlsx", ".xls"]:
             df = pd.read_excel(path)
         elif meta["extension"] in [".parquet"]:
