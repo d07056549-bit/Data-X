@@ -62,8 +62,6 @@ def find_date_candidate(s: str) -> str | None:
         match = re.search(pattern, s)
         if match:
             return match.group(0)
-    return None
-
 
 def parse_date_flexible(s: str) -> datetime | None:
     if not s:
