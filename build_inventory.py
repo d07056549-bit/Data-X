@@ -196,32 +196,33 @@ def load_existing_inventory() -> Optional[pd.DataFrame]:
 
 def merge_inventories(old: Optional[pd.DataFrame], new: pd.DataFrame) -> pd.DataFrame:
     """
-    Merge old and new inventories. If a file (by full path + hash)
-    is unchanged, keep the old row; otherwise, use the new row.
+    Merge old and new inventories safely.
+    If the old inventory does not contain the required key columns,
+    we skip merging and return the new inventory.
     """
     if old is None or old.empty:
         return new
 
-    # Use path_full + hash_md5 as identity
+    required_cols = {"path_full", "hash_md5"}
+
+    # If old inventory is from an older scanner version, skip merge
+    if not required_cols.issubset(old.columns):
+        print("⚠️  Old inventory missing required columns — replacing with new scan.")
+        return new
+
+    # Normal merge logic
     key_cols = ["path_full", "hash_md5"]
 
     old_keyed = old.set_index(key_cols, drop=False)
     new_keyed = new.set_index(key_cols, drop=False)
 
-    # Start from new; where old has the same key, prefer old row
     combined = new_keyed.copy()
     overlapping_keys = old_keyed.index.intersection(new_keyed.index)
 
     combined.loc[overlapping_keys] = old_keyed.loc[overlapping_keys]
-
-    # Also include any old rows whose files are no longer present (optional)
-    # If you want to keep them, uncomment:
-    # missing_keys = old_keyed.index.difference(new_keyed.index)
-    # combined = pd.concat([combined, old_keyed.loc[missing_keys]], axis=0)
-
     combined = combined.reset_index(drop=True)
-    return combined
 
+    return combined
 
 # -------------------------------------------------------------------
 # MAIN
