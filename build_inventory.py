@@ -12,10 +12,12 @@ import pandas as pd
 # CONFIG
 # -------------------------------------------------------------------
 
-# Project root: adjust if you move this script
-PROJECT_ROOT = Path(r"C:\Users\Empok\Documents\GitHub\Sofie")
+PROJECT_ROOT = Path(r"C:\Users\Empok\Documents\GitHub\Data-X")
 
 RAW_ROOT = PROJECT_ROOT / "Data" / "raw"
+PARQUET_CACHE = RAW_ROOT / "_parquet_cache"
+PARQUET_CACHE.mkdir(parents=True, exist_ok=True)
+
 PROCESSED_ROOT = PROJECT_ROOT / "Data" / "processed"
 PROCESSED_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -36,10 +38,7 @@ def md5_for_file(path: Path, block_size: int = 1 << 20) -> str:
 
 
 def infer_event_type(path: Path) -> Optional[str]:
-    """
-    Infer high-level event_type from the first folder under Data/raw.
-    Example: Data/raw/Conflict/ACLED/file.xlsx -> 'Conflict'
-    """
+    """Infer domain from top-level folder under Data/raw."""
     try:
         parts = path.relative_to(RAW_ROOT).parts
     except ValueError:
@@ -48,11 +47,7 @@ def infer_event_type(path: Path) -> Optional[str]:
 
 
 def infer_source(path: Path) -> Optional[str]:
-    """
-    Infer source from the second folder under Data/raw (if present),
-    otherwise from the stem of the file.
-    Example: Data/raw/Conflict/ACLED/file.xlsx -> 'ACLED'
-    """
+    """Infer source from second-level folder or filename."""
     try:
         parts = path.relative_to(RAW_ROOT).parts
     except ValueError:
@@ -63,45 +58,58 @@ def infer_source(path: Path) -> Optional[str]:
     return path.stem
 
 
-def try_parse_dates_from_df(df: pd.DataFrame) -> (Optional[pd.Timestamp], Optional[pd.Timestamp]):
-    """
-    Try to infer min/max dates from a DataFrame by looking for
-    likely date columns.
-    """
-    if df.empty:
+def parquet_cache_name(event_type: str, source: str, filename: str) -> Path:
+    """Construct Parquet filename using N1 scheme."""
+    safe_name = filename.replace(" ", "_").replace("-", "_")
+    return PARQUET_CACHE / f"{event_type}_{source}_{safe_name}.parquet"
+
+
+def load_raw_as_dataframe(path: Path, ext: str) -> Optional[pd.DataFrame]:
+    """Load raw file safely into a DataFrame."""
+    try:
+        if ext == ".csv":
+            return pd.read_csv(path, low_memory=False)
+        elif ext in [".xlsx", ".xls"]:
+            return pd.read_excel(path)
+        elif ext == ".json":
+            return pd.read_json(path)
+        elif ext == ".txt":
+            # Try CSV-like TXT
+            try:
+                return pd.read_csv(path, sep=None, engine="python", low_memory=False)
+            except Exception:
+                return None
+        else:
+            return None
+    except Exception:
+        return None
+
+
+def extract_date_range(df: pd.DataFrame) -> (Optional[pd.Timestamp], Optional[pd.Timestamp]):
+    """Infer date range from DataFrame."""
+    if df is None or df.empty:
         return None, None
 
-    # Candidate column names (lowercased)
-    candidates = [
-        "date", "time", "datetime", "timestamp",
-        "period", "year", "year_week", "year_month"
-    ]
+    date_cols = [c for c in df.columns if "date" in str(c).lower() or "time" in str(c).lower()]
 
-    # 1) Try obvious datetime-like columns
-    for col in df.columns:
-        col_l = str(col).lower()
-        if any(c in col_l for c in ["date", "time", "period", "timestamp"]):
-            try:
-                s = pd.to_datetime(df[col], errors="coerce")
-                s = s.dropna()
-                if not s.empty:
-                    return s.min(), s.max()
-            except Exception:
-                pass
+    for col in date_cols:
+        try:
+            s = pd.to_datetime(df[col], errors="coerce")
+            s = s.dropna()
+            if not s.empty:
+                return s.min(), s.max()
+        except Exception:
+            pass
 
-    # 2) Try to parse any column that looks numeric year
+    # Try year columns
     for col in df.columns:
-        col_l = str(col).lower()
-        if "year" in col_l:
+        if "year" in str(col).lower():
             try:
-                s = pd.to_numeric(df[col], errors="coerce")
-                s = s.dropna()
-                if not s.empty:
-                    years = s.astype(int)
-                    # represent as timestamps at start of year
+                years = pd.to_numeric(df[col], errors="coerce").dropna().astype(int)
+                if not years.empty:
                     return (
-                        pd.Timestamp(int(years.min()), 1, 1),
-                        pd.Timestamp(int(years.max()), 12, 31),
+                        pd.Timestamp(years.min(), 1, 1),
+                        pd.Timestamp(years.max(), 12, 31),
                     )
             except Exception:
                 pass
@@ -109,150 +117,130 @@ def try_parse_dates_from_df(df: pd.DataFrame) -> (Optional[pd.Timestamp], Option
     return None, None
 
 
-def extract_file_metadata(path: Path) -> Dict[str, Any]:
-    """
-    Extract generic file metadata (size, times, hash) and
-    attempt to infer date coverage for tabular files.
-    """
-    stat = path.stat()
-    size_bytes = stat.st_size
-    mtime = datetime.fromtimestamp(stat.st_mtime)
-    ctime = datetime.fromtimestamp(stat.st_ctime)
+def convert_to_parquet_if_needed(path: Path, event_type: str, source: str) -> Optional[Path]:
+    """Convert raw file to Parquet if not already cached."""
+    ext = path.suffix.lower()
+    parquet_path = parquet_cache_name(event_type, source, path.name)
 
-    # Basic metadata
-    meta: Dict[str, Any] = {
+    if parquet_path.exists():
+        return parquet_path
+
+    df = load_raw_as_dataframe(path, ext)
+    if df is None:
+        return None
+
+    try:
+        df.to_parquet(parquet_path, index=False)
+        print(f"[CACHE] Created Parquet: {parquet_path.name}")
+        return parquet_path
+    except Exception:
+        return None
+
+
+def extract_file_metadata(path: Path) -> Dict[str, Any]:
+    """Extract metadata for raw + parquet versions."""
+    stat = path.stat()
+    ext = path.suffix.lower()
+
+    event_type = infer_event_type(path) or "Unknown"
+    source = infer_source(path) or "Unknown"
+
+    parquet_path = convert_to_parquet_if_needed(path, event_type, source)
+
+    df = None
+    if parquet_path and parquet_path.exists():
+        try:
+            df = pd.read_parquet(parquet_path)
+        except Exception:
+            df = None
+
+    first_dt, last_dt = extract_date_range(df) if df is not None else (None, None)
+
+    print(f"[SCAN] {event_type}/{source} → {path.name} → dates: {first_dt} → {last_dt}")
+
+    return {
         "path_full": str(path),
         "path_relative": str(path.relative_to(PROJECT_ROOT)),
+        "parquet_path": str(parquet_path) if parquet_path else None,
         "filename": path.name,
-        "extension": path.suffix.lower(),
-        "size_bytes": size_bytes,
-        "modified_time": mtime,
-        "created_time": ctime,
-        "hash_md5": None,
-        "event_type": infer_event_type(path),
-        "source": infer_source(path),
-        "n_rows": None,
-        "n_cols": None,
-        "first_valid_date": None,
-        "last_valid_date": None,
+        "extension": ext,
+        "event_type": event_type,
+        "source": source,
+        "size_bytes": stat.st_size,
+        "modified_time": datetime.fromtimestamp(stat.st_mtime),
+        "created_time": datetime.fromtimestamp(stat.st_ctime),
+        "hash_md5": md5_for_file(path),
+        "n_rows": df.shape[0] if df is not None else None,
+        "n_cols": df.shape[1] if df is not None else None,
+        "first_valid_date": first_dt,
+        "last_valid_date": last_dt,
     }
-
-    # Compute hash
-    try:
-        meta["hash_md5"] = md5_for_file(path)
-    except Exception:
-        meta["hash_md5"] = None
-
-    # Try to read tabular content for date coverage
-    df: Optional[pd.DataFrame] = None
-    try:
-        if meta["extension"] in [".csv"]:
-            df = pd.read_csv(path, low_memory=False)
-        elif meta["extension"] in [".xlsx", ".xls"]:
-            df = pd.read_excel(path)
-        elif meta["extension"] in [".parquet"]:
-            df = pd.read_parquet(path)
-    except Exception:
-        df = None
-
-    if df is not None:
-        meta["n_rows"] = int(df.shape[0])
-        meta["n_cols"] = int(df.shape[1])
-        first_dt, last_dt = try_parse_dates_from_df(df)
-        meta["first_valid_date"] = first_dt
-        meta["last_valid_date"] = last_dt
-
-    return meta
 
 
 def scan_raw_tree() -> List[Dict[str, Any]]:
-    """
-    Recursively walk RAW_ROOT and collect metadata for all files.
-    """
-    records: List[Dict[str, Any]] = []
+    """Recursively scan all raw files."""
+    records = []
     for root, dirs, files in os.walk(RAW_ROOT):
-        # Optionally skip hidden dirs
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
-
+        dirs[:] = [d for d in dirs if not d.startswith("_parquet_cache")]
         for fname in files:
             if fname.startswith("."):
                 continue
             path = Path(root) / fname
             records.append(extract_file_metadata(path))
-
     return records
 
 
 def load_existing_inventory() -> Optional[pd.DataFrame]:
     if INVENTORY_PATH.exists():
-        inv = pd.read_parquet(INVENTORY_PATH)
-        # Ensure datetime types are normalized (avoid ns warnings)
+        df = pd.read_parquet(INVENTORY_PATH)
         for col in ["modified_time", "created_time", "first_valid_date", "last_valid_date"]:
-            if col in inv.columns:
-                inv[col] = pd.to_datetime(inv[col], errors="coerce")
-        return inv
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors="coerce")
+        return df
     return None
 
 
 def merge_inventories(old: Optional[pd.DataFrame], new: pd.DataFrame) -> pd.DataFrame:
-    """
-    Merge old and new inventories safely.
-    If the old inventory does not contain the required key columns,
-    we skip merging and return the new inventory.
-    """
+    """Merge inventories safely."""
     if old is None or old.empty:
         return new
 
-    required_cols = {"path_full", "hash_md5"}
-
-    # If old inventory is from an older scanner version, skip merge
-    if not required_cols.issubset(old.columns):
-        print("⚠️  Old inventory missing required columns — replacing with new scan.")
+    required = {"path_full", "hash_md5"}
+    if not required.issubset(old.columns):
+        print("⚠️ Old inventory missing required columns — replacing with new scan.")
         return new
 
-    # Normal merge logic
     key_cols = ["path_full", "hash_md5"]
 
     old_keyed = old.set_index(key_cols, drop=False)
     new_keyed = new.set_index(key_cols, drop=False)
 
     combined = new_keyed.copy()
-    overlapping_keys = old_keyed.index.intersection(new_keyed.index)
+    overlap = old_keyed.index.intersection(new_keyed.index)
 
-    combined.loc[overlapping_keys] = old_keyed.loc[overlapping_keys]
-    combined = combined.reset_index(drop=True)
+    combined.loc[overlap] = old_keyed.loc[overlap]
+    return combined.reset_index(drop=True)
 
-    return combined
 
 # -------------------------------------------------------------------
 # MAIN
 # -------------------------------------------------------------------
 
-def main() -> None:
+def main():
     print(f"Scanning raw tree under: {RAW_ROOT}")
-    records = scan_raw_tree()
-    print(f"Found {len(records)} files in current scan.")
 
-    new_inv = pd.DataFrame.from_records(records)
+    new_records = scan_raw_tree()
+    new_inv = pd.DataFrame(new_records)
 
-    # Normalize datetime columns to avoid ns warnings
     for col in ["modified_time", "created_time", "first_valid_date", "last_valid_date"]:
-        if col in new_inv.columns:
-            new_inv[col] = pd.to_datetime(new_inv[col], errors="coerce")
+        new_inv[col] = pd.to_datetime(new_inv[col], errors="coerce")
 
-    # Load existing inventory if present
     old_inv = load_existing_inventory()
-    if old_inv is not None:
-        print(f"Loaded existing inventory with {len(old_inv)} rows.")
-    else:
-        print("No existing inventory found; creating a new one.")
-
     final_inv = merge_inventories(old_inv, new_inv)
-    print(f"Final inventory has {len(final_inv)} rows.")
 
-    # Write to parquet
     final_inv.to_parquet(INVENTORY_PATH, index=False)
     print(f"Inventory written to: {INVENTORY_PATH}")
+    print(f"Total files indexed: {len(final_inv)}")
 
 
 if __name__ == "__main__":
