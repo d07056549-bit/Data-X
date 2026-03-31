@@ -34,7 +34,6 @@ DATE_CANDIDATE_PATTERNS = [
 ]
 
 if date.year < 1900 or date.year > 2100:
-
 return datetime.fromtimestamp(stat.st_mtime)
 
 EXPLICIT_FORMATS = [
