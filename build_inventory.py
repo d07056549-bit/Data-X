@@ -7,6 +7,54 @@ from typing import Optional, Dict, Any, List
 
 import pandas as pd
 
+# ---------------------------------------------------------
+# UNIVERSAL INGESTION FRAMEWORK — ROUTING + HANDLER SKELETON
+# ---------------------------------------------------------
+
+ROUTER = {
+    ".csv": "load_csv",
+    ".xlsx": "load_excel",
+    ".json": "load_json",
+    ".txt": "load_txt",
+    ".pdf": "extract_pdf_tables",
+    ".zip": "process_zip_bundle",
+    ".geojson": "process_geojson",
+    ".shp": "process_shapefile",
+    ".tif": "extract_raster_metadata",
+    ".tiff": "extract_raster_metadata",
+    ".nc": "extract_netcdf",
+    ".h5": "extract_hdf5",
+}
+
+# Handler stubs (to be filled in later)
+def load_csv(path): pass
+def load_excel(path): pass
+def load_json(path): pass
+def load_txt(path): pass
+
+def extract_pdf_tables(path): pass
+def process_zip_bundle(path): pass
+
+def process_geojson(path): pass
+def process_shapefile(path): pass
+
+def extract_raster_metadata(path): pass
+
+def extract_netcdf(path): pass
+def extract_hdf5(path): pass
+
+def dispatch_loader(path: Path):
+    ext = path.suffix.lower()
+
+    if ext in ROUTER:
+        handler_name = ROUTER[ext]
+        handler = globals().get(handler_name)
+
+        if handler:
+            return handler(path), handler_name
+
+    # Unknown file type → index only
+    return None, "none"
 
 # -------------------------------------------------------------------
 # CONFIG
@@ -145,16 +193,16 @@ def extract_file_metadata(path: Path) -> Dict[str, Any]:
     event_type = infer_event_type(path) or "Unknown"
     source = infer_source(path) or "Unknown"
 
-    # Convert to Parquet if needed
-    parquet_path = convert_to_parquet_if_needed(path, event_type, source)
+    # UNIVERSAL INGESTION FRAMEWORK: route file to correct handler
+df_or_meta, handler_used = dispatch_loader(path)
 
-    # Try loading Parquet for date inference
+# If handler returned a DataFrame → write Parquet
+if isinstance(df_or_meta, pd.DataFrame):
+    parquet_path = convert_to_parquet_if_needed(path, event_type, source, df=df_or_meta)
+    df = df_or_meta
+else:
+    parquet_path = None
     df = None
-    if parquet_path and parquet_path.exists():
-        try:
-            df = pd.read_parquet(parquet_path)
-        except Exception:
-            df = None
 
     # Extract date range
     first_dt, last_dt = extract_date_range(df) if df is not None else (None, None)
@@ -179,6 +227,9 @@ def extract_file_metadata(path: Path) -> Dict[str, Any]:
         "n_cols": df.shape[1] if df is not None else None,
         "first_valid_date": first_dt,
         "last_valid_date": last_dt,
+        "convertible": isinstance(df, pd.DataFrame),
+        "handler_used": handler_used,
+
     }
 
     return meta
