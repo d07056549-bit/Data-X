@@ -33,9 +33,6 @@ DATE_CANDIDATE_PATTERNS = [
     r"\b\d{1,2}[A-Za-z]{3}\d{4}\b",  # 13Mar2024
 ]
 
-if date.year < 1900 or date.year > 2100:
-return datetime.fromtimestamp(stat.st_mtime)
-
 EXPLICIT_FORMATS = [
     "%Y-%m-%d",
     "%Y_%m_%d",
@@ -60,6 +57,8 @@ def find_date_candidate(s: str) -> str | None:
         match = re.search(pattern, s)
         if match:
             return match.group(0)
+    return None
+
 
 def parse_date_flexible(s: str) -> datetime | None:
     if not s:
@@ -69,15 +68,21 @@ def parse_date_flexible(s: str) -> datetime | None:
     if not candidate:
         return None
 
+    # Try explicit formats
     for fmt in EXPLICIT_FORMATS:
         try:
-            return datetime.strptime(candidate, fmt)
+            dt = datetime.strptime(candidate, fmt)
+            if 1900 <= dt.year <= 2100:
+                return dt
         except ValueError:
             continue
 
+    # Try dateutil
     for dayfirst in (True, False):
         try:
-            return dateparser.parse(candidate, dayfirst=dayfirst)
+            dt = dateparser.parse(candidate, dayfirst=dayfirst)
+            if 1900 <= dt.year <= 2100:
+                return dt
         except Exception:
             continue
 
@@ -91,7 +96,7 @@ def looks_like_date_column(colname: str) -> bool:
 
 
 # ---------------------------------------------------------
-# FILE CONTENT DATE EXTRACTION
+# FILE CONTENT DATE EXTRACTION (STRUCTURED)
 # ---------------------------------------------------------
 
 def extract_date_from_file(full_path: Path) -> datetime | None:
@@ -102,13 +107,14 @@ def extract_date_from_file(full_path: Path) -> datetime | None:
         try:
             df = pd.read_csv(full_path, nrows=500)
             date_cols = [c for c in df.columns if looks_like_date_column(c)]
-
             for col in date_cols:
                 try:
                     dates = pd.to_datetime(df[col], errors="coerce")
                     valid = dates.dropna()
                     if not valid.empty:
-                        return valid.max().to_pydatetime()
+                        dt = valid.max().to_pydatetime()
+                        if 1900 <= dt.year <= 2100:
+                            return dt
                 except Exception:
                     continue
         except Exception:
@@ -135,7 +141,9 @@ def extract_date_from_file(full_path: Path) -> datetime | None:
                 try:
                     dt = pd.to_datetime(value, errors="coerce")
                     if pd.notnull(dt):
-                        return dt.to_pydatetime()
+                        dt = dt.to_pydatetime()
+                        if 1900 <= dt.year <= 2100:
+                            return dt
                 except Exception:
                     continue
         except Exception:
@@ -146,36 +154,27 @@ def extract_date_from_file(full_path: Path) -> datetime | None:
         try:
             df = pd.read_excel(full_path, nrows=500)
             date_cols = [c for c in df.columns if looks_like_date_column(c)]
-
             for col in date_cols:
                 try:
                     dates = pd.to_datetime(df[col], errors="coerce")
                     valid = dates.dropna()
                     if not valid.empty:
-                        return valid.max().to_pydatetime()
+                        dt = valid.max().to_pydatetime()
+                        if 1900 <= dt.year <= 2100:
+                            return dt
                 except Exception:
                     continue
         except Exception:
             pass
 
-
-# ---------------------------------------------------------
-# FILE CONTENT DATE EXTRACTION
-# ---------------------------------------------------------
-
-def extract_date_from_file(full_path: Path) -> datetime | None:
-    # ... your existing CSV/TXT/Excel/JSON logic ...
     return None
 
 
 # ---------------------------------------------------------
-# UNSTRUCTURED DATE EXTRACTION (NEW)
+# FILE CONTENT DATE EXTRACTION (UNSTRUCTURED)
 # ---------------------------------------------------------
 
 def extract_unstructured_date(full_path: Path) -> datetime | None:
-    """
-    Scan the first ~200 lines of a text-like file for any date pattern.
-    """
     try:
         with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
             for _ in range(200):
@@ -186,7 +185,9 @@ def extract_unstructured_date(full_path: Path) -> datetime | None:
                 candidate = find_date_candidate(line)
                 if candidate:
                     try:
-                        return dateparser.parse(candidate, dayfirst=True)
+                        dt = dateparser.parse(candidate, dayfirst=True)
+                        if 1900 <= dt.year <= 2100:
+                            return dt
                     except Exception:
                         continue
     except Exception:
@@ -194,33 +195,35 @@ def extract_unstructured_date(full_path: Path) -> datetime | None:
 
     return None
 
+
 # ---------------------------------------------------------
 # MULTI-TIER DATE INFERENCE
 # ---------------------------------------------------------
 
 def infer_date(full_path: Path, rel_path: Path, stat) -> datetime:
-    # Layer 1: filename
+    # 1. Filename
     date = parse_date_flexible(full_path.name)
-    if date and 1900 <= date.year <= 2100:
+    if date:
         return date
 
-    # Layer 2: folder path
+    # 2. Folder path
     date = parse_date_flexible(str(rel_path))
-    if date and 1900 <= date.year <= 2100:
+    if date:
         return date
 
-    # Layer 3: structured content
+    # 3. Structured content
     date = extract_date_from_file(full_path)
-    if date and 1900 <= date.year <= 2100:
+    if date:
         return date
 
-    # Layer 4: unstructured content
+    # 4. Unstructured content
     date = extract_unstructured_date(full_path)
-    if date and 1900 <= date.year <= 2100:
+    if date:
         return date
 
-    # Fallback
+    # 5. Fallback
     return datetime.fromtimestamp(stat.st_mtime)
+
 
 # ---------------------------------------------------------
 # EVENT TYPE INFERENCE
