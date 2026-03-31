@@ -178,9 +178,9 @@ def extract_date_from_file(full_path: Path) -> datetime | None:
     suffix = full_path.suffix.lower()
 
     # --------------------------
-    # CSV / TXT
-    # --------------------------
-    if suffix in [".csv", ".txt"]:
+# CSV / TXT
+# --------------------------
+if suffix in [".csv", ".txt"]:
     try:
         df = pd.read_csv(full_path, nrows=500)
 
@@ -197,6 +197,8 @@ def extract_date_from_file(full_path: Path) -> datetime | None:
                 continue
     except Exception:
         pass
+        
+ return None
 
     # --------------------------
     # JSON
