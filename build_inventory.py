@@ -59,6 +59,13 @@ def find_date_candidate(s: str) -> str | None:
         if match:
             return match.group(0)
     return None
+    
+def looks_like_date_column(colname: str) -> bool:
+    col = colname.lower()
+    keywords = ["date", "time", "year", "period", "timestamp", "dt"]
+    return any(k in col for k in keywords)
+
+
 
 
 def parse_date_flexible(s: str) -> datetime | None:
@@ -174,18 +181,22 @@ def extract_date_from_file(full_path: Path) -> datetime | None:
     # CSV / TXT
     # --------------------------
     if suffix in [".csv", ".txt"]:
-        try:
-            df = pd.read_csv(full_path, nrows=500)  # read only first 500 rows
-            for col in df.columns:
-                try:
-                    dates = pd.to_datetime(df[col], errors="coerce")
-                    valid = dates.dropna()
-                    if not valid.empty:
-                        return valid.max().to_pydatetime()
-                except Exception:
-                    continue
-        except Exception:
-            pass
+    try:
+        df = pd.read_csv(full_path, nrows=500)
+
+        # Only check columns that look like dates
+        date_cols = [c for c in df.columns if looks_like_date_column(c)]
+
+        for col in date_cols:
+            try:
+                dates = pd.to_datetime(df[col], errors="coerce")
+                valid = dates.dropna()
+                if not valid.empty:
+                    return valid.max().to_pydatetime()
+            except Exception:
+                continue
+    except Exception:
+        pass
 
     # --------------------------
     # JSON
@@ -221,18 +232,20 @@ def extract_date_from_file(full_path: Path) -> datetime | None:
     # Excel
     # --------------------------
     if suffix in [".xlsx", ".xls"]:
-        try:
-            df = pd.read_excel(full_path, nrows=500)
-            for col in df.columns:
-                try:
-                    dates = pd.to_datetime(df[col], errors="coerce")
-                    valid = dates.dropna()
-                    if not valid.empty:
-                        return valid.max().to_pydatetime()
-                except Exception:
-                    continue
-        except Exception:
-            pass
+    try:
+        df = pd.read_excel(full_path, nrows=500)
+        date_cols = [c for c in df.columns if looks_like_date_column(c)]
+
+        for col in date_cols:
+            try:
+                dates = pd.to_datetime(df[col], errors="coerce")
+                valid = dates.dropna()
+                if not valid.empty:
+                    return valid.max().to_pydatetime()
+            except Exception:
+                continue
+    except Exception:
+        pass
 
     return None
 
