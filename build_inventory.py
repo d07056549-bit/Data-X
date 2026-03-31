@@ -86,12 +86,13 @@ def parse_date_flexible(s: str) -> datetime | None:
     return None
 
 
-def infer_date(full_path: Path, rel_path: Path, stat) -> datetime:
+def infer_date(full_path, rel_path, stat):
     """
     Multi-tier date inference:
     1. Filename
     2. Folder path
-    3. File modified timestamp (fallback)
+    3. File content (NEW)
+    4. File modified timestamp
     """
     # Tier 1: filename
     date = parse_date_flexible(full_path.name)
@@ -103,9 +104,13 @@ def infer_date(full_path: Path, rel_path: Path, stat) -> datetime:
     if date:
         return date
 
-    # Tier 3: fallback to file modified timestamp
-    return datetime.fromtimestamp(stat.st_mtime)
+    # Tier 3: file content
+    date = extract_date_from_file(full_path)
+    if date:
+        return date
 
+    # Tier 4: fallback
+    return datetime.fromtimestamp(stat.st_mtime)
 
 # ---------------------------------------------------------
 # EVENT TYPE INFERENCE
@@ -156,6 +161,80 @@ def build_current_scan() -> pd.DataFrame:
             })
 
     return pd.DataFrame(records)
+
+def extract_date_from_file(full_path: Path) -> datetime | None:
+    """
+    Try to extract a date from inside the file.
+    Supports CSV, TXT, JSON, XLSX.
+    Returns the latest date found.
+    """
+    suffix = full_path.suffix.lower()
+
+    # --------------------------
+    # CSV / TXT
+    # --------------------------
+    if suffix in [".csv", ".txt"]:
+        try:
+            df = pd.read_csv(full_path, nrows=500)  # read only first 500 rows
+            for col in df.columns:
+                try:
+                    dates = pd.to_datetime(df[col], errors="coerce")
+                    valid = dates.dropna()
+                    if not valid.empty:
+                        return valid.max().to_pydatetime()
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    # --------------------------
+    # JSON
+    # --------------------------
+    if suffix == ".json":
+        try:
+            import json
+            with open(full_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            # Flatten JSON
+            def walk(obj):
+                if isinstance(obj, dict):
+                    for v in obj.values():
+                        yield from walk(v)
+                elif isinstance(obj, list):
+                    for v in obj:
+                        yield from walk(v)
+                else:
+                    yield obj
+
+            for value in walk(data):
+                try:
+                    dt = pd.to_datetime(value, errors="coerce")
+                    if pd.notnull(dt):
+                        return dt.to_pydatetime()
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    # --------------------------
+    # Excel
+    # --------------------------
+    if suffix in [".xlsx", ".xls"]:
+        try:
+            df = pd.read_excel(full_path, nrows=500)
+            for col in df.columns:
+                try:
+                    dates = pd.to_datetime(df[col], errors="coerce")
+                    valid = dates.dropna()
+                    if not valid.empty:
+                        return valid.max().to_pydatetime()
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    return None
 
 
 # ---------------------------------------------------------
