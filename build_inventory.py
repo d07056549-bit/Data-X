@@ -1,11 +1,19 @@
 #!/usr/bin/env python
 import os
 import hashlib
+import geopandas as gpd
+import json
+import zipfile
+import pdfplumber
+
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any, List
+from osgeo import gdal
 
 import pandas as pd
+import xarray as xr
+import h5py
 
 # ---------------------------------------------------------
 # UNIVERSAL INGESTION FRAMEWORK — ROUTING + HANDLER SKELETON
@@ -27,21 +35,132 @@ ROUTER = {
 }
 
 # Handler stubs (to be filled in later)
-def load_csv(path): pass
-def load_excel(path): pass
-def load_json(path): pass
-def load_txt(path): pass
+def load_csv(path):
+    try:
+        return pd.read_csv(path)
+    except Exception:
+        return None
 
-def extract_pdf_tables(path): pass
-def process_zip_bundle(path): pass
+def load_excel(path):
+    try:
+        return pd.read_excel(path)
+    except Exception:
+        return None
 
-def process_geojson(path): pass
-def process_shapefile(path): pass
+def load_json(path):
+    try:
+        return pd.read_json(path)
+    except Exception:
+        return None
 
-def extract_raster_metadata(path): pass
+def load_txt(path):
+    try:
+        return pd.read_csv(path, sep=None, engine="python")
+    except Exception:
+        return None
 
-def extract_netcdf(path): pass
-def extract_hdf5(path): pass
+import pdfplumber
+
+def extract_pdf_tables(path):
+    try:
+        tables = []
+        with pdfplumber.open(path) as pdf:
+            for page in pdf.pages:
+                t = page.extract_table()
+                if t:
+                    df = pd.DataFrame(t[1:], columns=t[0])
+                    tables.append(df)
+
+        if tables:
+            return pd.concat(tables, ignore_index=True)
+        return None
+    except Exception:
+        return None
+
+import zipfile
+
+def process_zip_bundle(path):
+    try:
+        dfs = []
+        with zipfile.ZipFile(path, "r") as z:
+            for name in z.namelist():
+                with z.open(name) as f:
+                    temp_path = Path(name)
+                    df, _ = dispatch_loader(temp_path)
+                    if isinstance(df, pd.DataFrame):
+                        dfs.append(df)
+
+        if dfs:
+            return pd.concat(dfs, ignore_index=True)
+        return None
+    except Exception:
+        return None
+
+
+import json
+
+def process_geojson(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        features = data.get("features", [])
+        rows = []
+        for feat in features:
+            props = feat.get("properties", {})
+            geom = feat.get("geometry", {})
+            props["geometry_type"] = geom.get("type")
+            props["geometry"] = str(geom.get("coordinates"))
+            rows.append(props)
+
+        return pd.DataFrame(rows)
+    except Exception:
+        return None
+
+def process_shapefile(path):
+    try:
+        gdf = gpd.read_file(path)
+        return pd.DataFrame(gdf.drop(columns="geometry"))
+    except Exception:
+        return None
+
+def extract_raster_metadata(path):
+    try:
+        ds = gdal.Open(str(path))
+        if ds is None:
+            return None
+
+        meta = {
+            "raster_width": ds.RasterXSize,
+            "raster_height": ds.RasterYSize,
+            "raster_bands": ds.RasterCount,
+            "projection": ds.GetProjection(),
+            "geotransform": ds.GetGeoTransform(),
+        }
+        return pd.DataFrame([meta])
+    except Exception:
+        return None
+
+def extract_netcdf(path):
+    try:
+        ds = xr.open_dataset(path)
+        df = ds.to_dataframe().reset_index()
+        return df
+    except Exception:
+        return None
+
+def extract_hdf5(path):
+    try:
+        rows = []
+        with h5py.File(path, "r") as f:
+            def recurse(name, obj):
+                if isinstance(obj, h5py.Dataset):
+                    rows.append({"dataset": name, "shape": obj.shape, "dtype": str(obj.dtype)})
+            f.visititems(recurse)
+
+        return pd.DataFrame(rows)
+    except Exception:
+        return None
 
 def dispatch_loader(path: Path):
     ext = path.suffix.lower()
@@ -165,25 +284,35 @@ def extract_date_range(df: pd.DataFrame) -> (Optional[pd.Timestamp], Optional[pd
     return None, None
 
 
-def convert_to_parquet_if_needed(path: Path, event_type: str, source: str) -> Optional[Path]:
+def convert_to_parquet_if_needed(path: Path, event_type: str, source: str, df: Optional[pd.DataFrame] = None) -> Optional[Path]:
     """Convert raw file to Parquet if not already cached."""
     ext = path.suffix.lower()
     parquet_path = parquet_cache_name(event_type, source, path.name)
 
+    # If already cached, return it
     if parquet_path.exists():
         return parquet_path
 
-    df = load_raw_as_dataframe(path, ext)
-    if df is None:
+    # If UIF handler already produced a DataFrame, use it
+    if isinstance(df, pd.DataFrame):
+        try:
+            df.to_parquet(parquet_path, index=False)
+            print(f"[CACHE] Created Parquet: {parquet_path.name}")
+            return parquet_path
+        except Exception:
+            return None
+
+    # Otherwise fall back to legacy raw loader
+    df_raw = load_raw_as_dataframe(path, ext)
+    if df_raw is None:
         return None
 
     try:
-        df.to_parquet(parquet_path, index=False)
+        df_raw.to_parquet(parquet_path, index=False)
         print(f"[CACHE] Created Parquet: {parquet_path.name}")
         return parquet_path
     except Exception:
         return None
-
 
 def extract_file_metadata(path: Path) -> Dict[str, Any]:
     """Extract metadata for raw + parquet versions."""
