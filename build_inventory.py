@@ -158,25 +158,25 @@ def extract_file_metadata(path: Path) -> Dict[str, Any]:
 
     print(f"[SCAN] {event_type}/{source} → {path.name} → dates: {first_dt} → {last_dt}")
 
-       meta = {
-    "path_full": str(path),
-    "path_relative": str(path.relative_to(PROJECT_ROOT)),
-    "parquet_path": str(parquet_path) if parquet_path else None,
-    "filename": path.name,
-    "extension": ext,
-    "event_type": event_type,
-    "source": source,
-    "size_bytes": stat.st_size,
-    "modified_time": datetime.fromtimestamp(stat.st_mtime),
-    "created_time": datetime.fromtimestamp(stat.st_ctime),
-    "hash_md5": md5_for_file(path),
-    "n_rows": df.shape[0] if df is not None else None,
-    "n_cols": df.shape[1] if df is not None else None,
-    "first_valid_date": first_dt,
-    "last_valid_date": last_dt,
-}
+    meta = {
+        "path_full": str(path),
+        "path_relative": str(path.relative_to(PROJECT_ROOT)),
+        "parquet_path": str(parquet_path) if parquet_path else None,
+        "filename": path.name,
+        "extension": ext,
+        "event_type": event_type,
+        "source": source,
+        "size_bytes": stat.st_size,
+        "modified_time": datetime.fromtimestamp(stat.st_mtime),
+        "created_time": datetime.fromtimestamp(stat.st_ctime),
+        "hash_md5": md5_for_file(path),
+        "n_rows": df.shape[0] if df is not None else None,
+        "n_cols": df.shape[1] if df is not None else None,
+        "first_valid_date": first_dt,
+        "last_valid_date": last_dt,
+    }
 
-return meta
+    return meta
 
 
 def scan_raw_tree() -> List[Dict[str, Any]]:
