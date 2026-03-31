@@ -158,7 +158,6 @@ def extract_date_from_file(full_path: Path) -> datetime | None:
         except Exception:
             pass
 
-    return None
 
 # ---------------------------------------------------------
 # FILE CONTENT DATE EXTRACTION
@@ -202,28 +201,25 @@ def extract_unstructured_date(full_path: Path) -> datetime | None:
 def infer_date(full_path: Path, rel_path: Path, stat) -> datetime:
     # Layer 1: filename
     date = parse_date_flexible(full_path.name)
-    if date:
+    if date and 1900 <= date.year <= 2100:
         return date
 
     # Layer 2: folder path
     date = parse_date_flexible(str(rel_path))
-    if date:
+    if date and 1900 <= date.year <= 2100:
         return date
 
     # Layer 3: structured content
     date = extract_date_from_file(full_path)
-    if date:
+    if date and 1900 <= date.year <= 2100:
         return date
 
     # Layer 4: unstructured content
     date = extract_unstructured_date(full_path)
-    if date:
+    if date and 1900 <= date.year <= 2100:
         return date
 
-    # Layer 5: domain-specific (optional, next step)
-    # e.g., ACLED, UCDP, IMF, EIA, Market
-
-    # Layer 6: fallback
+    # Fallback
     return datetime.fromtimestamp(stat.st_mtime)
 
 # ---------------------------------------------------------
