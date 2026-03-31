@@ -24,15 +24,19 @@ OUTPUT_PATH = PROCESSED_ROOT / "inventory_files.parquet"
 # ---------------------------------------------------------
 
 DATE_CANDIDATE_PATTERNS = [
-    r"\d{4}-\d{2}-\d{2}",
-    r"\d{4}_\d{2}_\d{2}",
-    r"\d{2}-\d{2}-\d{4}",
-    r"\d{2}_\d{2}_\d{4}",
-    r"\d{2}/\d{2}/\d{4}",
-    r"\d{4}-\d{2}",
-    r"\d{4}",
-    r"\d{1,2}[A-Za-z]{3}\d{4}",
+    r"\b\d{4}-\d{2}-\d{2}\b",        # 2024-03-21
+    r"\b\d{4}_\d{2}_\d{2}\b",        # 2024_03_21
+    r"\b\d{2}-\d{2}-\d{4}\b",        # 21-03-2024
+    r"\b\d{2}_\d{2}_\d{4}\b",        # 21_03_2024
+    r"\b\d{2}/\d{2}/\d{4}\b",        # 21/03/2024
+    r"\b\d{4}-\d{2}\b",              # 2024-03
+    r"\b\d{1,2}[A-Za-z]{3}\d{4}\b",  # 13Mar2024
 ]
+
+if date.year < 1900 or date.year > 2100:
+    return None
+
+return datetime.fromtimestamp(stat.st_mtime)
 
 EXPLICIT_FORMATS = [
     "%Y-%m-%d",
