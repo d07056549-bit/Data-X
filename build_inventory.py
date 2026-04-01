@@ -260,14 +260,14 @@ def extract_date_range(df: pd.DataFrame) -> (Optional[pd.Timestamp], Optional[pd
 
     date_cols = [c for c in df.columns if "date" in str(c).lower() or "time" in str(c).lower()]
 
-    for col in date_cols:
-        try:
-            s = pd.to_datetime(df[col], errors="coerce")
-            s = s.dropna()
-            if not s.empty:
-                return s.min(), s.max()
-        except Exception:
-            pass
+for col in date_cols:
+    try:
+        s = pd.to_datetime(df[col], errors="coerce")
+        s = s.dropna()
+        if not s.empty:
+            return s.min(), s.max()
+    except Exception:
+        pass
 
     # Try year columns
     for col in df.columns:
